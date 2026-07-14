@@ -24,8 +24,10 @@ app.get('/webhook', (req, res) => {
     const challenge = req.query['hub.challenge'];
 
     if (mode && token === META_VERIFY_TOKEN) {
+        console.log("✅ Meta Webhook Verification successful!");
         return res.status(200).send(challenge);
     }
+    console.warn("❌ Webhook verification failed. Tokens do not match.");
     res.sendStatus(403);
 });
 
@@ -33,6 +35,9 @@ app.get('/webhook', (req, res) => {
 app.post('/webhook', async (req, res) => {
     try {
         const body = req.body;
+
+        // Print incoming payload alerts immediately to the Render console log stream
+        console.log("📥 Incoming Webhook Received Payload:", JSON.stringify(body));
 
         if (body.object === 'whatsapp_business_account' && body.entry?.[0]?.changes?.[0]?.value?.messages?.[0]) {
             const message = body.entry[0].changes[0].value.messages[0];
@@ -44,16 +49,18 @@ app.post('/webhook', async (req, res) => {
                 // Immediately reply with 200 OK to Meta to avoid timeout loops
                 res.sendStatus(200);
 
+                console.log(`🎙️ Processing incoming audio message ID: ${audioId} from user: ${from}`);
+
                 // --- DATABASE CHECK ENGINE ---
-                // Query Supabase to find if this phone number exists
-                let { data: user, error } = await supabase
+                let { data: user, error: userError } = await supabase
                     .from('users')
                     .select('*')
                     .eq('phone_number', from)
-                    .single();
+                    .maybeSingle(); // Safely returns null instead of throwing an error if row is absent
 
                 // If user doesn't exist, create a trial record automatically
                 if (!user) {
+                    console.log(`✨ Creating new database trial record row for phone number: ${from}`);
                     const { data: newUser, error: insertError } = await supabase
                         .from('users')
                         .insert([{ phone_number: from, subscription_status: 'trial', total_minutes_allowed: 600, minutes_used: 0 }])
@@ -62,14 +69,16 @@ app.post('/webhook', async (req, res) => {
                     user = newUser;
                 }
 
-                // Check if they ran out of minutes
+                // Check if they ran out of trial allowance minutes
                 if (user.minutes_used >= user.total_minutes_allowed) {
+                    console.warn(`⚠️ User ${from} has exceeded their maximum trial limits.`);
                     await sendWhatsAppMessage(from, body.entry[0].changes[0].value.metadata.phone_number_id, 
                         `⚠️ *Limit Exceeded!*\nYou have used all your 600 minutes for the year.\n\nUpgrade here to get unlimited access: [Stripe Payment Link Placeholder]`);
                     return;
                 }
 
-                // Step A: Fetch Secure Media URL from Meta
+                // Step A: Fetch Secure Media Download URL from Meta
+                console.log("🔗 Fetching secure audio download download string from Meta graph API...");
                 const mediaUrlResponse = await axios.get(`https://graph.facebook.com/v18.0/${audioId}`, {
                     headers: { 'Authorization': `Bearer ${WHATSAPP_TOKEN}` }
                 });
@@ -79,6 +88,7 @@ app.post('/webhook', async (req, res) => {
                 const localFilePath = path.join(__dirname, `${audioId}.ogg`);
                 const writer = fs.createWriteStream(localFilePath);
                 
+                console.log(`💾 Downloading audio binary layout straight onto local disk space path...`);
                 const audioDownload = await axios({
                     method: 'get',
                     url: downloadUrl,
@@ -98,6 +108,7 @@ app.post('/webhook', async (req, res) => {
                 form.append('file', fs.createReadStream(localFilePath));
                 form.append('model', 'whisper-large-v3');
 
+                console.log("🗣️ Transmitting raw voice track buffer straight to Groq Whisper API engine...");
                 const transcriptionResponse = await axios.post('https://api.groq.com/openai/v1/audio/transcriptions', form, {
                     headers: {
                         ...form.getHeaders(),
@@ -105,42 +116,51 @@ app.post('/webhook', async (req, res) => {
                     }
                 });
                 const rawTranscript = transcriptionResponse.data.text;
+                console.log(`📝 Audio transcription engine successfully output text: "${rawTranscript.substring(0, 45)}..."`);
 
                 // Estimate audio minutes processed (rough word-count fallback math)
                 const estimatedMinutes = Math.max(1, Math.ceil(rawTranscript.split(" ").length / 150));
 
-                // Step D: Format and summarize using Gemini 2.5 Flash
+                // Step D: Format and summarize using Gemini 2.0 Flash
                 const systemPrompt = `You are an expert assistant. Format this transcript into an clean WhatsApp layout. Keep it sharp.\n\n📝 *SUMMARY*:\n[1-2 sentences overview]\n\n🔑 *KEY TAKEAWAYS*:\n• [Item 1]\n• [Item 2]\n\n⚡ *ACTION ITEMS*:\n• [Action item]`;
                 
-                const geminiResponse = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
+                console.log("🤖 Querying Gemini 2.0 Flash for semantic analysis and formatting blocks...");
+                const geminiResponse = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
                     contents: [{ parts: [{ text: `${systemPrompt}\n\nTranscript Content:\n${rawTranscript}` }] }]
                 });
                 let formattedSummary = geminiResponse.data.candidates[0].content.parts[0].text;
 
-                // Update database balance for this phone number
+                // Update usage accounting balance for this phone number inside Supabase
                 const newMinutesUsed = user.minutes_used + estimatedMinutes;
                 await supabase
                     .from('users')
                     .update({ minutes_used: newMinutesUsed })
                     .eq('phone_number', from);
+                console.log(`📊 Updated user minutes accounting: ${newMinutesUsed} total minutes used.`);
 
-                // Add balance updates to the bottom of the WhatsApp bubble
+                // Append remaining countdown balance footer text details to the summary payload
                 formattedSummary += `\n\n---\n⏳ *Balance:* ${user.total_minutes_allowed - newMinutesUsed} / ${user.total_minutes_allowed} minutes left.`;
 
                 // Step E: Send formatted summary back via WhatsApp
                 await sendWhatsAppMessage(from, body.entry[0].changes[0].value.metadata.phone_number_id, formattedSummary);
+                console.log("🚀 Summary payload message dispatched back to WhatsApp chat thread successfully!");
 
-                // Cleanup disk space
+                // Local workspace housecleaning
                 if (fs.existsSync(localFilePath)) {
                     fs.unlinkSync(localFilePath);
+                    console.log("🧹 Local file clean up tracking clear.");
                 }
                 return;
             }
         }
+        // If it's a regular text message or metadata status drop from Meta, resolve with 200
         res.sendStatus(200);
     } catch (error) {
-        console.error("Webhook processing error logs:", error.response?.data || error.message);
-        res.sendStatus(500);
+        console.error("❌ Webhook processing error logs:", error.response?.data || error.message);
+        // Ensure a fallback response is sent if headers weren't already sent down
+        if (!res.headersSent) {
+            res.sendStatus(500);
+        }
     }
 });
 
@@ -153,8 +173,11 @@ async function sendWhatsAppMessage(to, phone_number_id, textBody) {
         type: "text",
         text: { body: textBody }
     }, {
-        headers: { 'Authorization': `Bearer ${WHATSAPP_TOKEN}`, 'Content-Type': 'application/json' }
+        headers: { 
+            'Authorization': `Bearer ${WHATSAPP_TOKEN}`, 
+            'Content-Type': 'application/json' 
+        }
     });
 }
 
-app.listen(PORT, () => console.log(`Micro-SaaS server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`🚀 Micro-SaaS application engine listening on port: ${PORT}`));
