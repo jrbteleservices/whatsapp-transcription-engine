@@ -91,6 +91,14 @@ app.post('/webhook', async (req, res) => {
         if (!res.headersSent) res.sendStatus(500);
     }
 });
-
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => console.log(`🚀 Engine running on port: ${PORT}`));
+} catch (error) {
+    if (error.response) {
+        console.error("❌ API Rejected Request (Status 429):", error.response.status);
+        console.error("❌ Provider Error Data:", JSON.stringify(error.response.data));
+    } else {
+        console.error("❌ Final Error:", error.message);
+    }
+    if (!res.headersSent) res.sendStatus(500);
+}
