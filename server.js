@@ -59,9 +59,9 @@ app.post('/webhook', async (req, res) => {
             console.log(`🗣️ Transcript: ${transcript}`);
 
             const geminiResponse = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, 
-                { contents: [{ parts: [{ text: `Summarize this: ${transcript}` }] }] }
-            );
+    `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, 
+    { contents: [{ parts: [{ text: `Summarize this and provide key action items: ${transcript}` }] }] }
+);
 
             const replyText = geminiResponse.data.candidates[0].content.parts[0].text;
             await axios.post(`https://graph.facebook.com/v25.0/${PHONE_NUMBER_ID}/messages`, {
