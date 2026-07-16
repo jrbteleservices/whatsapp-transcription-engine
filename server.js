@@ -77,9 +77,9 @@ app.post('/webhook', async (req, res) => {
                     return;
                 }
 
-                // Step A: Fetch Secure Media Download URL from Meta
-                console.log("🔗 Fetching secure audio download download string from Meta graph API...");
-                const mediaUrlResponse = await axios.get(`https://graph.facebook.com/v18.0/${audioId}`, {
+                // Step A: Fetch Secure Media Download URL from Meta (UPDATED TO V25.0)
+                console.log("🔗 Fetching secure audio download string from Meta Graph API v25.0...");
+                const mediaUrlResponse = await axios.get(`https://graph.facebook.com/v25.0/${audioId}`, {
                     headers: { 'Authorization': `Bearer ${WHATSAPP_TOKEN}` }
                 });
                 const downloadUrl = mediaUrlResponse.data.url;
@@ -122,7 +122,7 @@ app.post('/webhook', async (req, res) => {
                 const estimatedMinutes = Math.max(1, Math.ceil(rawTranscript.split(" ").length / 150));
 
                 // Step D: Format and summarize using Gemini 2.0 Flash
-                const systemPrompt = `You are an expert assistant. Format this transcript into an clean WhatsApp layout. Keep it sharp.\n\n📝 *SUMMARY*:\n[1-2 sentences overview]\n\n🔑 *KEY TAKEAWAYS*:\n• [Item 1]\n• [Item 2]\n\n⚡ *ACTION ITEMS*:\n• [Action item]`;
+                const systemPrompt = `You are an expert assistant. Format this transcript into a clean WhatsApp layout. Keep it sharp.\n\n📝 *SUMMARY*:\n[1-2 sentences overview]\n\n🔑 *KEY TAKEAWAYS*:\n• [Item 1]\n• [Item 2]\n\n⚡ *ACTION ITEMS*:\n• [Action item]`;
                 
                 console.log("🤖 Querying Gemini 2.0 Flash for semantic analysis and formatting blocks...");
                 const geminiResponse = await axios.post(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`, {
@@ -164,9 +164,9 @@ app.post('/webhook', async (req, res) => {
     }
 });
 
-// Helper function to transmit outbound WhatsApp payloads
+// Helper function to transmit outbound WhatsApp payloads (UPDATED TO V25.0)
 async function sendWhatsAppMessage(to, phone_number_id, textBody) {
-    await axios.post(`https://graph.facebook.com/v18.0/${phone_number_id}/messages`, {
+    await axios.post(`https://graph.facebook.com/v25.0/${phone_number_id}/messages`, {
         messaging_product: "whatsapp",
         recipient_type: "individual",
         to: to,
