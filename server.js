@@ -23,7 +23,7 @@ app.get('/webhook', (req, res) => {
     const token = req.query['hub.verify_token'];
     const challenge = req.query['hub.challenge'];
 
-    if (mode && token === META_VERIFY_TOKEN) {
+    if (mode && token === process.env.META_VERIFY_TOKEN) {
         console.log("✅ Meta Webhook Verification successful!");
         return res.status(200).send(challenge);
     }
